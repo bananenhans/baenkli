@@ -14,7 +14,6 @@ import { supabase } from "./supabaseClient";
 
 const defaultCenter = [46.8182, 8.2275]; // Schweiz Mitte
 
-// Standard-Icons für Bänkli-Marker
 delete L.Icon.Default.prototype._getIconUrl;
 L.Icon.Default.mergeOptions({
   iconRetinaUrl: require("leaflet/dist/images/marker-icon-2x.png"),
@@ -22,7 +21,6 @@ L.Icon.Default.mergeOptions({
   shadowUrl: require("leaflet/dist/images/marker-shadow.png"),
 });
 
-// Pulsing dot CSS (für Standort)
 const pulsingDotStyle = `
 @keyframes pulse {
   0% { r: 6; opacity: 1; }
@@ -34,7 +32,6 @@ const pulsingDotStyle = `
 }
 `;
 
-// sanftes Zoomen/Fliegen zur Position
 function FlyToLocation({ location }) {
   const map = useMap();
   useEffect(() => {
@@ -49,20 +46,27 @@ function App() {
   const [benches, setBenches] = useState([]);
   const [formVisible, setFormVisible] = useState(false);
   const [selectedPos, setSelectedPos] = useState(null);
+
+  const [ambienteRating, setAmbienteRating] = useState(3);
   const [viewRating, setViewRating] = useState(3);
   const [accessibilityRating, setAccessibilityRating] = useState(3);
   const [fireplace, setFireplace] = useState(false);
-  const [photoFile, setPhotoFile] = useState(null);
+
+  const [photoFile1, setPhotoFile1] = useState(null);
+  const [photoFile2, setPhotoFile2] = useState(null);
+  const [description, setDescription] = useState("");
+
   const [userLocation, setUserLocation] = useState(null);
   const [editBenchId, setEditBenchId] = useState(null);
 
-  // Filter (sichtbar, standardmässig offen)
   const [filtersVisible, setFiltersVisible] = useState(true);
-  const [filterView, setFilterView] = useState(""); // ≥-Logik, Anzeige ohne "≥"
+  const [filterAmbiente, setFilterAmbiente] = useState("");
+  const [filterView, setFilterView] = useState("");
   const [filterAccessibility, setFilterAccessibility] = useState("");
   const [filterFireplace, setFilterFireplace] = useState("");
 
-  const fileInputRef = useRef();
+  const fileInputRef1 = useRef();
+  const fileInputRef2 = useRef();
 
   useEffect(() => {
     fetchBenches();
@@ -100,18 +104,26 @@ function App() {
   }
 
   async function handleSubmit() {
-    let photoUrl = null;
-    if (photoFile) {
-      photoUrl = await uploadPhoto(photoFile);
+    let photoUrl1 = null;
+    let photoUrl2 = null;
+
+    if (photoFile1) {
+      photoUrl1 = await uploadPhoto(photoFile1);
+    }
+    if (photoFile2) {
+      photoUrl2 = await uploadPhoto(photoFile2);
     }
 
     const benchData = {
       lat: selectedPos.lat,
       lng: selectedPos.lng,
+      ambiente_rating: ambienteRating,
       view_rating: viewRating,
       accessibility_rating: accessibilityRating,
       fireplace,
-      photo_url: photoUrl,
+      photo_url: photoUrl1,
+      photo_url_2: photoUrl2,
+      description,
     };
 
     if (editBenchId) {
@@ -124,12 +136,14 @@ function App() {
     fetchBenches();
   }
 
-  async function handleDelete(id, photoUrl) {
+  async function handleDelete(id, photoUrl, photoUrl2) {
     const confirm = window.confirm("Bänkli löschen?");
     if (!confirm) return;
-    if (photoUrl) {
-      const filename = photoUrl.split("/").pop();
-      await supabase.storage.from("bench-photos").remove([filename]);
+    const toDelete = [];
+    if (photoUrl) toDelete.push(photoUrl.split("/").pop());
+    if (photoUrl2) toDelete.push(photoUrl2.split("/").pop());
+    if (toDelete.length > 0) {
+      await supabase.storage.from("bench-photos").remove(toDelete);
     }
     await supabase.from("benches").delete().eq("id", id);
     fetchBenches();
@@ -137,9 +151,11 @@ function App() {
 
   function startEditing(bench) {
     setSelectedPos({ lat: bench.lat, lng: bench.lng });
+    setAmbienteRating(bench.ambiente_rating);
     setViewRating(bench.view_rating);
     setAccessibilityRating(bench.accessibility_rating);
     setFireplace(bench.fireplace);
+    setDescription(bench.description || "");
     setEditBenchId(bench.id);
     setFormVisible(true);
   }
@@ -147,12 +163,16 @@ function App() {
   function resetForm() {
     setFormVisible(false);
     setSelectedPos(null);
+    setAmbienteRating(3);
     setViewRating(3);
     setAccessibilityRating(3);
     setFireplace(false);
-    setPhotoFile(null);
+    setPhotoFile1(null);
+    setPhotoFile2(null);
+    setDescription("");
     setEditBenchId(null);
-    if (fileInputRef.current) fileInputRef.current.value = null;
+    if (fileInputRef1.current) fileInputRef1.current.value = null;
+    if (fileInputRef2.current) fileInputRef2.current.value = null;
   }
 
   function handleLocateMe() {
@@ -170,10 +190,11 @@ function App() {
     );
   }
 
-  // Filterlogik (≥ für Aussicht & Erreichbarkeit, exakt für Feuerstelle)
   function filteredBenches() {
     return benches.filter((bench) => {
       return (
+        (filterAmbiente === "" ||
+          bench.ambiente_rating >= Number(filterAmbiente)) &&
         (filterView === "" || bench.view_rating >= Number(filterView)) &&
         (filterAccessibility === "" ||
           bench.accessibility_rating >= Number(filterAccessibility)) &&
@@ -206,6 +227,22 @@ function App() {
 
         {filtersVisible && (
           <div className="px-3 py-3 space-y-3 text-sm">
+            <div>
+              <div className="block text-gray-700 mb-1">Ambiente</div>
+              <select
+                value={filterAmbiente}
+                onChange={(e) => setFilterAmbiente(e.target.value)}
+                className="block w-full border rounded px-2 py-1"
+              >
+                <option value="">Alle</option>
+                {[1, 2, 3, 4, 5].map((n) => (
+                  <option key={n} value={n}>
+                    {n}
+                  </option>
+                ))}
+              </select>
+            </div>
+
             <div>
               <div className="block text-gray-700 mb-1">Aussicht</div>
               <select
@@ -253,6 +290,7 @@ function App() {
 
             <button
               onClick={() => {
+                setFilterAmbiente("");
                 setFilterView("");
                 setFilterAccessibility("");
                 setFilterFireplace("");
@@ -274,7 +312,6 @@ function App() {
         <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
         <MapClickHandler />
 
-        {/* Standort */}
         {userLocation && (
           <>
             <FlyToLocation location={userLocation} />
@@ -289,7 +326,6 @@ function App() {
           </>
         )}
 
-        {/* Bänkli-Marker */}
         {filteredBenches().map((bench) => (
           <Marker key={bench.id} position={[bench.lat, bench.lng]}>
             <Popup>
@@ -312,9 +348,31 @@ function App() {
                     />
                   </a>
                 )}
+                {bench.photo_url_2 && (
+                  <a
+                    href={bench.photo_url_2}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    <img
+                      src={bench.photo_url_2}
+                      alt="Bänkli"
+                      style={{
+                        width: "100%",
+                        maxHeight: "150px",
+                        objectFit: "cover",
+                        marginBottom: "0.5rem",
+                      }}
+                    />
+                  </a>
+                )}
+                <p>Ambiente: 🎨 {bench.ambiente_rating}/5</p>
                 <p>Aussicht: ⭐ {bench.view_rating}/5</p>
                 <p>Erreichbarkeit: ♿ {bench.accessibility_rating}/5</p>
                 <p>Feuerstelle: {bench.fireplace ? "🔥 Ja" : "Nein"}</p>
+                {bench.description && (
+                  <p style={{ marginTop: "0.5rem" }}>ℹ️ {bench.description}</p>
+                )}
                 <div className="flex justify-between mt-2">
                   <button
                     className="text-blue-600"
@@ -324,7 +382,13 @@ function App() {
                   </button>
                   <button
                     className="text-red-600"
-                    onClick={() => handleDelete(bench.id, bench.photo_url)}
+                    onClick={() =>
+                      handleDelete(
+                        bench.id,
+                        bench.photo_url,
+                        bench.photo_url_2
+                      )
+                    }
                   >
                     🗑 Löschen
                   </button>
@@ -334,7 +398,6 @@ function App() {
           </Marker>
         ))}
 
-        {/* Neuer Marker */}
         {selectedPos && !formVisible && (
           <Marker position={selectedPos}>
             <Popup>
@@ -366,7 +429,6 @@ function App() {
         )}
       </MapContainer>
 
-      {/* Formular */}
       {formVisible && selectedPos && (
         <div className="absolute inset-0 flex justify-center items-center z-[1001] bg-black bg-opacity-50">
           <div className="bg-white p-5 rounded shadow w-[90%] max-w-md">
@@ -376,14 +438,18 @@ function App() {
 
             <div className="grid grid-cols-1 gap-4">
               <label className="block">
-                📸 Foto:
-                <input
-                  type="file"
-                  accept="image/*"
-                  ref={fileInputRef}
-                  onChange={(e) => setPhotoFile(e.target.files[0])}
-                  className="mt-1"
-                />
+                🎨 Ambiente:
+                <select
+                  value={ambienteRating}
+                  onChange={(e) => setAmbienteRating(Number(e.target.value))}
+                  className="ml-2 border rounded px-2 py-1"
+                >
+                  {[1, 2, 3, 4, 5].map((n) => (
+                    <option key={n} value={n}>
+                      {n}
+                    </option>
+                  ))}
+                </select>
               </label>
 
               <label className="block">
@@ -425,6 +491,38 @@ function App() {
                   checked={fireplace}
                   onChange={(e) => setFireplace(e.target.checked)}
                   className="ml-2 align-middle"
+                />
+              </label>
+
+              <label className="block">
+                📸 Foto 1:
+                <input
+                  type="file"
+                  accept="image/*"
+                  ref={fileInputRef1}
+                  onChange={(e) => setPhotoFile1(e.target.files[0])}
+                  className="mt-1"
+                />
+              </label>
+
+              <label className="block">
+                📸 Foto 2:
+                <input
+                  type="file"
+                  accept="image/*"
+                  ref={fileInputRef2}
+                  onChange={(e) => setPhotoFile2(e.target.files[0])}
+                  className="mt-1"
+                />
+              </label>
+
+              <label className="block">
+                ℹ️ Info:
+                <textarea
+                  maxLength="150"
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  className="mt-1 border rounded px-2 py-1 w-full"
                 />
               </label>
             </div>
